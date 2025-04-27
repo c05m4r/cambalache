@@ -382,11 +382,11 @@ def main(
         )
 
     except typer.Exit as e:
-        sys.exit(e.code)
+        exit_code = getattr(e, 'code', getattr(e, 'exit_code', 1))
+        sys.exit(exit_code)
     except Exception as e:
         typer.echo(f"Error inesperado durante la ejecución: {e}", err=True)
         import traceback
-
         traceback.print_exc()
         sys.exit(1)
 

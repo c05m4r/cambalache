@@ -60,6 +60,16 @@ class BothStrategy(TransformationStrategy):
         ]
 
 
+class GeneratorStrategy(TransformationStrategy):
+    """Estrategia para generar valores secuenciales basados en un prefijo base."""
+
+    def __init__(self, base_value: str):
+        self.base_value = base_value
+
+    def apply(self, original_value: str, word: str) -> List[Dict[str, str]]:
+        return [{"field_value": self.base_value + word}]
+
+
 class AppConfig:
     """Almacena y valida la configuración de la aplicación."""
 
@@ -73,6 +83,7 @@ class AppConfig:
         prefix: bool,
         suffix: bool,
         both: bool,
+        gen_field: Optional[str],
     ):
         self.template_path = template_path
         self.wordlist_path = wordlist_path
@@ -82,16 +93,26 @@ class AppConfig:
         self.prefix = prefix
         self.suffix = suffix
         self.both = both
+        self.gen_field = gen_field
         self._validate()
 
     def _validate(self):
         """Realiza validaciones de configuración."""
-        if sum([self.prefix, self.suffix, self.both]) > 1:
+
+        active_modes = sum([self.prefix, self.suffix, self.both, bool(self.gen_field)])
+        if active_modes > 1:
             typer.echo(
-                "Error: Las opciones --prefix, --suffix, y --both son mutuamente excluyentes.",
+                "Error: Las opciones --prefix, --suffix, --both, y --gen son mutuamente excluyentes.",
                 err=True,
             )
             raise typer.Exit(code=1)
+        
+        if self.gen_field:
+            typer.echo(
+                "Advertencia: En modo generador (--gen), la wordlist se ignorará.",
+                err=True,
+            )
+            
         if self.include_fields and self.ignore_fields:
             typer.echo(
                 "Error: No puedes usar --include y --ignore al mismo tiempo.", err=True
@@ -101,11 +122,18 @@ class AppConfig:
     @property
     def is_generation_mode(self) -> bool:
         """Determina si estamos en modo generación (vs. reemplazo)."""
-        return self.prefix or self.suffix or self.both
+        return self.prefix or self.suffix or self.both or bool(self.gen_field)
 
-    def get_strategy(self) -> TransformationStrategy:
+    @property
+    def is_generator_mode(self) -> bool:
+        """Determina si estamos en modo generador secuencial."""
+        return bool(self.gen_field)
+
+    def get_strategy(self, base_value: str = "") -> TransformationStrategy:
         """Selecciona la estrategia de transformación adecuada."""
-        if self.prefix:
+        if self.gen_field:
+            return GeneratorStrategy(base_value)
+        elif self.prefix:
             return PrefixStrategy()
         elif self.suffix:
             return SuffixStrategy()
@@ -116,11 +144,13 @@ class AppConfig:
 
     def get_mode_description(self) -> str:
         """Retorna una descripción del modo de operación."""
-        if self.prefix:
+        if self.gen_field:
+            return f"generador secuencial para campo '{self.gen_field}'"
+        elif self.prefix:
             return "prefijo"
-        if self.suffix:
+        elif self.suffix:
             return "sufijo"
-        if self.both:
+        elif self.both:
             return "prefijo Y sufijo (objetos separados)"
         return "Reemplazo"
 
@@ -162,11 +192,16 @@ class DataLoader:
     def load_wordlist(self, path: Path) -> List[str]:
         """Carga la lista de palabras, eliminando duplicados y vacíos."""
         try:
-            df = pd.read_csv(
-                path, header=None, names=["word"], dtype=str, skip_blank_lines=True
-            )
-            df = df.dropna().drop_duplicates().reset_index(drop=True)
-            words = df["word"].tolist()
+            with path.open("r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f.readlines()]
+            
+            words = []
+            seen = set()
+            for line in lines:
+                if line and line not in seen:
+                    words.append(line)
+                    seen.add(line)
+            
             if not words:
                 typer.echo(
                     f"Advertencia: La lista de palabras '{path}' está vacía o no contiene palabras válidas.",
@@ -202,49 +237,68 @@ class JsonProcessor:
         self.base_obj: Dict[str, Any] = {}
         self.words: List[str] = []
         self.target_fields: Set[str] = set()
-        self.strategy: TransformationStrategy = self.config.get_strategy()
+        self.strategy: Optional[TransformationStrategy] = None
 
     def _load_inputs(self):
-        """Carga la plantilla y la lista de palabras."""
+        """Carga la plantilla y opcionalmente la lista de palabras."""
         self.base_obj = self.data_loader.load_template(self.config.template_path)
-        self.words = self.data_loader.load_wordlist(self.config.wordlist_path)
+        
+        if not self.config.is_generator_mode:
+            self.words = self.data_loader.load_wordlist(self.config.wordlist_path)
+        else:
+            base_json_data = self.base_obj.get("json_data", {})
+            num_objects = max(len(base_json_data), 10)
+            self.words = [str(i + 1) for i in range(num_objects)]
 
     def _determine_target_fields(self):
         """Determina los campos a modificar."""
         base_json_data = self.base_obj.get("json_data", {})
         available_fields = set(base_json_data.keys())
 
-        if self.config.include_fields:
-            self.target_fields = available_fields.intersection(
-                set(self.config.include_fields)
-            )
-            if len(self.target_fields) != len(self.config.include_fields):
-                missing = set(self.config.include_fields) - available_fields
+        if self.config.is_generator_mode:
+            if self.config.gen_field not in available_fields:
                 typer.echo(
-                    f"Advertencia: Los siguientes campos de --include no existen en json_data: {', '.join(missing)}",
-                    err=True,
-                )
-            if not self.target_fields:
-                typer.echo(
-                    f"Error: Ninguno de los campos especificados en --include ({', '.join(self.config.include_fields)}) existe en json_data.",
+                    f"Error: El campo '{self.config.gen_field}' especificado en --gen no existe en json_data.",
                     err=True,
                 )
                 raise typer.Exit(code=1)
-        elif self.config.ignore_fields:
-            self.target_fields = available_fields - set(self.config.ignore_fields)
-            if (
-                not self.target_fields and available_fields
-            ):
-                typer.echo(
-                    f"Advertencia: Al ignorar {', '.join(self.config.ignore_fields)}, no quedan campos para modificar.",
-                    err=True,
-                )
+            self.target_fields = {self.config.gen_field}
+            base_value = str(base_json_data.get(self.config.gen_field, ""))
+            self.strategy = self.config.get_strategy(base_value)
         else:
-            self.target_fields = available_fields
+            if self.config.include_fields:
+                self.target_fields = available_fields.intersection(
+                    set(self.config.include_fields)
+                )
+                if len(self.target_fields) != len(self.config.include_fields):
+                    missing = set(self.config.include_fields) - available_fields
+                    typer.echo(
+                        f"Advertencia: Los siguientes campos de --include no existen en json_data: {', '.join(missing)}",
+                        err=True,
+                    )
+                if not self.target_fields:
+                    typer.echo(
+                        f"Error: Ninguno de los campos especificados en --include ({', '.join(self.config.include_fields)}) existe en json_data.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+            elif self.config.ignore_fields:
+                self.target_fields = available_fields - set(self.config.ignore_fields)
+                if (
+                    not self.target_fields and available_fields
+                ):
+                    typer.echo(
+                        f"Advertencia: Al ignorar {', '.join(self.config.ignore_fields)}, no quedan campos para modificar.",
+                        err=True,
+                    )
+            else:
+                self.target_fields = available_fields
+            
+            self.strategy = self.config.get_strategy()
 
         if not self.target_fields and available_fields:
             typer.echo(
-                "Advertencia: No se han determinado campos objetivo para modificar según las opciones --include/--ignore.",
+                "Advertencia: No se han determinado campos objetivo para modificar según las opciones especificadas.",
                 err=True,
             )
 
@@ -360,6 +414,9 @@ def main(
     both: bool = typer.Option(
         False, "--both", help="Modo Generación: crea objetos con prefijo Y sufijo."
     ),
+    gen_field: Optional[str] = typer.Option(
+        None, "--gen", help="Modo Generador: genera valores secuenciales para el campo especificado."
+    ),
 ):
     """Punto de entrada principal de la aplicación."""
     try:
@@ -372,6 +429,7 @@ def main(
             prefix=prefix,
             suffix=suffix,
             both=both,
+            gen_field=gen_field,
         )
 
         processor = JsonProcessor(config)

@@ -1,6 +1,6 @@
 # Cambalache JSON Modifier
 
-Herramienta de línea de comandos que genera múltiples objetos JSON a partir de una plantilla JSON y una lista de palabras. Permite modificar campos específicos dentro de json_data, ya sea reemplazando sus valores o añadiendo las palabras como prefijos y/o sufijos
+Herramienta de línea de comandos que genera múltiples objetos JSON a partir de una plantilla JSON y una lista de palabras. Permite modificar campos específicos dentro de json_data, ya sea reemplazando sus valores, añadiendo las palabras como prefijos y/o sufijos, o generando valores secuenciales.
 
 ## Preparación del entorno
 
@@ -24,7 +24,7 @@ uv run cambalache.py [OPCIONES] plantilla.json palabras.txt salida.json
 ```
 
   * `plantilla.json`: Tu archivo JSON base (se usa el primer objeto).
-  * `palabras.txt`: Archivo con una palabra por línea.
+  * `palabras.txt`: Archivo con una palabra por línea (se ignora en modo generador).
   * `salida.json`: Nombre del archivo JSON resultante.
 
 -----
@@ -141,3 +141,62 @@ uv run cambalache.py plantilla.json palabras.txt salida_gen_both_email_ciudad.js
 ```
 
 *Resultado: 12 objetos (3 palabras x 2 campos x 2 [prefijo/sufijo]). Objetos modificados solo en `email` o `ciudad`, tanto con prefijo como con sufijo.*
+
+-----
+
+### Modo Generador (Crea valores secuenciales)
+
+**10. Generar valores secuenciales para un campo específico**
+
+```bash
+uv run cambalache.py plantilla.json dummy.txt salida.json --gen username
+```
+
+*Resultado: 10 objetos (por defecto). El campo `username` tendrá valores secuenciales como "testuser1", "testuser2", "testuser3", etc., basados en el valor original de la plantilla. Los demás campos permanecen sin cambios.*
+
+**Ejemplo con una plantilla de usuario:**
+
+Si tu plantilla tiene:
+```json
+{
+  "json_data": {
+    "identificador": "usuario_example",
+    "email": "usuario_example@siu.edu.ar",
+    "password": "abc123456"
+  }
+}
+```
+
+Ejecutando:
+```bash
+uv run cambalache.py usuarios.json dummy.txt usuarios_generados.json --gen identificador
+```
+
+Generará objetos con:
+- `identificador`: "usuario_example1", "usuario_example2", "usuario_example3", ...
+- `email` y `password` permanecen como en la plantilla original
+
+**Nota:** En modo generador (`--gen`), el archivo de palabras es requerido pero se ignora. Puedes usar cualquier archivo dummy como segundo argumento.
+
+-----
+
+## Opciones Disponibles
+
+```bash
+uv run cambalache.py --help
+```
+
+### Argumentos:
+- `TEMPLATE_PATH`: Ruta al archivo de plantilla JSON (requerido)
+- `WORDLIST_PATH`: Ruta al archivo de lista de palabras (requerido, pero ignorado en modo `--gen`)
+- `OUTPUT_PATH`: Ruta al archivo JSON de salida (requerido)
+
+### Opciones:
+- `--include -i`: Especificar qué campos en json_data modificar exclusivamente
+- `--ignore -x`: Especificar qué campos en json_data ignorar
+- `--prefix`: Modo generación - añadir palabras como prefijo a los valores originales
+- `--suffix`: Modo generación - añadir palabras como sufijo a los valores originales
+- `--both`: Modo generación - crear objetos con prefijo Y sufijo (objetos separados)
+- `--gen`: Modo generador - crear valores secuenciales para el campo especificado (ej: usuario1, usuario2, usuario3...)
+
+**Nota:** Los modos `--prefix`, `--suffix`, `--both` y `--gen` son mutuamente excluyentes.

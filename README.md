@@ -1,15 +1,15 @@
 # Cambalache JSON Modifier
 
-Command-line tool that generates multiple JSON objects from a JSON template and a wordlist. It allows modifying specific fields within json_data, either by replacing their values or adding the words as prefixes and/or suffixes.
+Command-line tool that generates multiple JSON objects from a JSON template and a wordlist. It allows modifying specific fields within json_data, either by replacing their values, adding the words as prefixes and/or suffixes, or generating sequential values.
 
 ## Environment Setup
 
 ### Install uv
 
 ```bash
-curl -LsSf [https://astral.sh/uv/install.sh](https://astral.sh/uv/install.sh) | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 echo 'eval "$(uv generate-shell-completion bash)"' >> ~/.bashrc
-````
+```
 
 ### Install dependencies
 
@@ -24,7 +24,7 @@ uv run cambalache.py [OPTIONS] template.json wordlist.txt output.json
 ```
 
   * `template.json`: Your base JSON file (the first object is used).
-  * `wordlist.txt`: File with one word per line.
+  * `wordlist.txt`: File with one word per line (ignored in generator mode).
   * `output.json`: Name of the resulting JSON file.
 
 -----
@@ -141,3 +141,62 @@ uv run cambalache.py template.json wordlist.txt output.json --both --include ema
 ```
 
 *Result: 12 objects (3 words x 2 fields x 2 [prefix/suffix]). Objects modified only in `email` or `city`, with both prefix and suffix versions.*
+
+-----
+
+### Generator Mode (Creates sequential values)
+
+**10. Generate sequential values for a specific field**
+
+```bash
+uv run cambalache.py template.json dummy.txt output.json --gen username
+```
+
+*Result: 10 objects (by default). The `username` field will have sequential values like "testuser1", "testuser2", "testuser3", etc., based on the original value in the template. Other fields remain unchanged.*
+
+**Example with a user template:**
+
+If your template has:
+```json
+{
+  "json_data": {
+    "identificador": "usuario_example",
+    "email": "usuario_example@siu.edu.ar",
+    "password": "abc123456"
+  }
+}
+```
+
+Running:
+```bash
+uv run cambalache.py usuarios.json dummy.txt usuarios_generados.json --gen identificador
+```
+
+Will generate objects with:
+- `identificador`: "usuario_example1", "usuario_example2", "usuario_example3", ...
+- `email` and `password` remain as in the original template
+
+**Note:** In generator mode (`--gen`), the wordlist file is required but ignored. You can use any dummy file as the second argument.
+
+-----
+
+## Available Options
+
+```bash
+uv run cambalache.py --help
+```
+
+### Arguments:
+- `TEMPLATE_PATH`: Path to the JSON template file (required)
+- `WORDLIST_PATH`: Path to the wordlist file (required, but ignored in `--gen` mode)
+- `OUTPUT_PATH`: Path to the output JSON file (required)
+
+### Options:
+- `--include -i`: Specify which fields in json_data to modify exclusively
+- `--ignore -x`: Specify which fields in json_data to ignore
+- `--prefix`: Generation mode - add words as prefix to original values
+- `--suffix`: Generation mode - add words as suffix to original values
+- `--both`: Generation mode - create objects with both prefix AND suffix (separate objects)
+- `--gen`: Generator mode - create sequential values for the specified field (e.g., user1, user2, user3...)
+
+**Note:** The modes `--prefix`, `--suffix`, `--both`, and `--gen` are mutually exclusive.
